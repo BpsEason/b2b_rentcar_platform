@@ -1,0 +1,252 @@
+version: '3.8'
+
+services:
+  # Nginx 服務，用於代理前端和 Laravel API
+  nginx:
+    image: nginx:alpine
+    container_name: nginx_proxy
+    ports:
+      - "80:80" # 對外暴露 80 端口
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./frontend-app/dist:/usr/share/nginx/html # 靜態文件
+    depends_on:
+      - laravel-app
+      - frontend-app # 確保前端應用也已建置
+
+  # Laravel 後端應用服務 (PHP-FPM)
+  laravel-app:
+    build:
+      context: ./laravel-app
+      dockerfile: Dockerfile
+    container_name: laravel_app
+    volumes:
+      - ./laravel-app:/var/www/html
+    expose:
+      - "9000" # PHP-FPM 內部端口
+    environment:
+      - APP_ENV=local
+      - APP_DEBUG=${LARAVEL_APP_DEBUG}
+      - APP_URL=${LARAVEL_APP_URL}
+      - DB_CONNECTION=${LARAVEL_DB_CONNECTION}
+      - DB_HOST=${LARAVEL_DB_HOST}
+      - DB_PORT=${LARAVEL_DB_PORT}
+      - DB_DATABASE=${LARAVEL_DB_DATABASE}
+      - DB_USERNAME=${LARAVEL_DB_USERNAME}
+      - DB_PASSWORD=${LARAVEL_DB_PASSWORD}
+      - REDIS_HOST=${LARAVEL_REDIS_HOST}
+      - REDIS_PORT=${LARAVEL_REDIS_PORT}
+      - RABBITMQ_HOST=${LARAVEL_RABBITMQ_HOST}
+      - RABBITMQ_PORT=${LARAVEL_RABBITMQ_PORT}
+      - RABBITMQ_USER=${LARAVEL_RABBITMQ_USER} # 使用 .env 變數
+      - RABBITMQ_PASSWORD=${LARAVEL_RABBITMQ_PASSWORD} # 使用 .env 變數
+      - KAFKA_BROKERS=${LARAVEL_KAFKA_BROKERS}
+      - JWT_SECRET=${JWT_SECRET}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS} # 傳遞 CORS 環境變數
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+      - kafka # 依賴 Kafka
+
+  # MySQL 資料庫服務
+  mysql:
+    image: mysql:8.0
+    container_name: mysql_db
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql # 持久化資料
+
+  # Redis 服務
+  redis:
+    image: redis:alpine
+    container_name: redis_cache
+    ports:
+      - "6379:6379"
+
+  # RabbitMQ 訊息佇列服務
+  rabbitmq:
+    image: rabbitmq:3-management-alpine # 包含管理介面
+    container_name: rabbitmq_broker
+    ports:
+      - "5672:5672" # AMQP 端口
+      - "15672:15672" # 管理介面端口
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER_INPUT} # 使用新生成的用戶名
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD_INPUT} # 使用新生成的密碼
+
+  # 前端應用建置服務 (僅用於建置，不常駐)
+  frontend-app:
+    build:
+      context: ./frontend-app
+      dockerfile: Dockerfile
+    container_name: frontend_builder
+    volumes:
+      - ./frontend-app:/app
+      - /app/node_modules # 確保 node_modules 不會被 host 覆蓋
+    command: npm run build # 運行建置命令
+
+  fastapi-app:
+    build:
+      context: ./fastapi-app
+      dockerfile: Dockerfile
+    container_name: fastapi_app
+    ports:
+      - "8001:8000" # FastAPI 對外端口
+    volumes:
+      - ./fastapi-app:/app
+    environment:
+      # 直接從根 .env 獲取變數
+      - DATABASE_URL=mysql://b2b_rentcar_platform_user:Cf0vVXl3welzdiP+P7244s7h+Ie7X-Pz@mysql:3306/b2b_rentcar_platform_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - CELERY_BROKER_URL=pyamqp://b2b_rentcar_platform_admin:3D2UPv-N52fdOtGSPLKX84JnxE6-lW9s@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - KAFKA_BROKERS=kafka:9092
+      - JWT_SECRET_KEY=hK69MDx5ndj2clm8JZvhIcLZqjUTxJud
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS} # 傳遞 CORS 環境變數
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+      - kafka # 依賴 Kafka
+  celery_worker:
+    build:
+      context: ./fastapi-app
+      dockerfile: Dockerfile
+    command: celery -A app.tasks.example_tasks worker --loglevel=info -P solo
+    container_name: celery_worker
+    volumes:
+      - ./fastapi-app:/app
+    environment:
+      - C_FORCE_ROOT=true
+      - CELERY_BROKER_URL=pyamqp://b2b_rentcar_platform_admin:3D2UPv-N52fdOtGSPLKX84JnxE6-lW9s@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - rabbitmq
+      - redis
+
+  celery_beat:
+    build:
+      context: ./fastapi-app
+      dockerfile: Dockerfile
+    command: celery -A app.tasks.example_tasks beat --loglevel=info
+    container_name: celery_beat
+    volumes:
+      - ./fastapi-app:/app
+    environment:
+      - C_FORCE_ROOT=true
+      - CELERY_BROKER_URL=pyamqp://b2b_rentcar_platform_admin:3D2UPv-N52fdOtGSPLKX84JnxE6-lW9s@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    depends_on:
+      - rabbitmq
+      - redis
+
+  fastapi_kafka_consumer:
+    build:
+      context: ./fastapi-app
+      dockerfile: Dockerfile
+    command: python -c "import asyncio; from app.consumers.kafka_consumer import consume_kafka_messages; asyncio.run(consume_kafka_messages())"
+    container_name: fastapi_kafka_consumer
+    volumes:
+      - ./fastapi-app:/app
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_GROUP_ID=fastapi_consumer_group
+      - KAFKA_TOPICS=booking_events,payment_events
+    depends_on:
+      - kafka
+  zookeeper:
+    image: zookeeper/zookeeper:3.8.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOO_MY_ID: 1
+      ZOO_PORT: 2181
+      ZOO_SERVERS: server.1=0.0.0.0:2888:3888
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9093:9093" # 用於外部連接
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093 # Kafka 內部與外部可訪問地址
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    depends_on:
+      - zookeeper
+  prometheus:
+    image: prom/prometheus:v2.42.0
+    container_name: prometheus
+    volumes:
+      - ./prometheus:/etc/prometheus
+    command: --config.file=/etc/prometheus/prometheus.yml --web.enable-remote-write-receiver
+    ports:
+      - "9090:9090"
+    depends_on:
+      - cadvisor # 依賴 cAdvisor 來監控 Docker 容器
+      - mysql_exporter # 依賴 mysql_exporter (根據優化建議)
+      - redis_exporter # 依賴 redis_exporter (根據優化建議)
+      # - rabbitmq_exporter # 如果需要監控 RabbitMQ，請解除註解並添加服務
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: grafana
+    ports:
+      - "3000:3000" # Grafana 對外端口
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0 # 監控 Docker 容器資源
+    container_name: cadvisor
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:rw
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8080:8080"
+  mysql_exporter: # 添加 MySQL Exporter 服務 (根據優化建議)
+    image: prom/mysqld-exporter:v0.14.0
+    container_name: mysql_exporter
+    environment:
+      - MYSQL_ROOT_PASSWORD=rG48VUXScbxvxIgtEYfWSHeudZpb30w0 # 使用 root 密碼連接 MySQL
+      - DATA_SOURCE_NAME=root:${MYSQL_ROOT_PASSWORD_INPUT}@tcp(mysql:3306)/
+    ports:
+      - "9104:9104"
+    depends_on:
+      - mysql
+  redis_exporter: # 添加 Redis Exporter 服務 (根據優化建議)
+    image: oliver006/redis_exporter:latest
+    container_name: redis_exporter
+    environment:
+      - REDIS_ADDR=redis:6379
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+
+volumes:
+  mysql_data: # MySQL 資料持久化
+  grafana_data: # Grafana 資料持久化

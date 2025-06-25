@@ -1,0 +1,32 @@
+global:
+  scrape_interval: 15s # 每 15 秒抓取一次 metrics
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090'] # Prometheus 自身
+
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080'] # cAdvisor 服務，監控 Docker 容器
+
+  - job_name: 'mysql_exporter' # 監控 MySQL (根據優化建議)
+    static_configs:
+      - targets: ['mysql_exporter:9104']
+
+  - job_name: 'redis_exporter' # 監控 Redis (根據優化建議)
+    static_configs:
+      - targets: ['redis_exporter:9121']
+
+  - job_name: 'node_exporter' # 監控主機系統資源 (如果需要，在宿主機或作為 Docker 服務額外安裝 node_exporter)
+    static_configs:
+      - targets: ['host.docker.internal:9100'] # 假設宿主機上運行著 node_exporter
+
+  - job_name: 'rabbitmq_exporter' # 監控 RabbitMQ (如果需要，請在 docker-compose.yml 中添加 rabbitmq_exporter 服務)
+    static_configs:
+      - targets: ['rabbitmq_exporter:9090'] # 假設 rabbitmq_exporter 運行在獨立服務
+
+  - job_name: 'fastapi_app' # 監控 FastAPI 應用 (如果 FastAPI 有暴露 metrics)
+    # static_configs:
+    #   - targets: ['fastapi-app:8000'] # 假設 FastAPI 在 8000 端口，且有 /metrics 端點
+    #     metrics_path: /metrics # 如果 metrics 路徑不是 /metrics

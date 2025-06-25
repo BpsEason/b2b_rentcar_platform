@@ -1,0 +1,15 @@
+fastapi==0.111.0 # 指定具體版本
+uvicorn==0.29.0 # 指定具體版本
+sqlalchemy==2.0.30 # 指定具體版本
+pymysql
+pydantic==2.7.1 # 指定具體版本
+python-dotenv==1.0.1 # 指定具體版本
+python-jose[cryptography]==3.3.0 # 指定具體版本
+passlib[bcrypt]==1.7.4 # 指定具體版本
+celery==5.3.6 # 指定具體版本
+redis==5.0.4 # 指定具體版本
+confluent-kafka==2.4.0 # 指定具體版本
+scikit-learn==1.4.2 # 範例: 用於 ML 模型
+numpy==1.26.4 # 範例: ML 依賴
+pandas==2.2.2 # 範例: ML 依賴
+fastapi-limiter==0.1.5 # 添加速率限制庫 (根據優化建議)
