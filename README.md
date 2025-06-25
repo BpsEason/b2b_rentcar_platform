@@ -1,14 +1,14 @@
 # B2B 租車平台 MVP
 
-這是一個簡單實用的 B2B 租車平台 MVP，專為企業用戶設計，提供車輛查詢、預約與訂單管理功能。後端用 Laravel，前端用 Vue，支援 Docker 容器化部署，搭配 MySQL、Redis 和 RabbitMQ，預留 FastAPI 做 AI 動態定價。程式碼聚焦核心功能，模組化設計，方便後續擴展。
+這是一個簡單實用的 B2B 租車平台 MVP，專為企業用戶設計，提供車輛查詢、預約與訂單管理功能。後端用 Laravel（需自行補充基本代碼），前端用 Vue，支援 Docker 容器化部署，搭配 MySQL、Redis 和 RabbitMQ，預留 FastAPI 做 AI 動態定價。程式碼聚焦核心功能，模組化設計，方便後續擴展。
 
 ## 專案亮點
 
-- **模組化架構**：Laravel 後端與 Vue 前端分離，API 驅動，易於維護與升級。
-- **容器化部署**：Docker 整合 MySQL、Redis、RabbitMQ 等服務，環境一致，快速上線。
+- **模組化架構**：Laravel 後端與 Vue 前端分離，API 驅動，易於維護。
+- **容器化部署**：Docker 整合 MySQL、Redis、RabbitMQ，環境一致，快速上線。
 - **多租戶雛形**：支援 `tenant_id` 基礎結構，未來可實現資料隔離。
-- **異步處理**：用 RabbitMQ 處理訂單任務，提升系統穩定性。
-- **可擴展性**：預留 FastAPI 服務，方便加入 AI 推薦或動態定價。
+- **異步處理**：用 RabbitMQ 處理訂單任務，提升穩定性。
+- **可擴展性**：預留 FastAPI 服務，方便加入 AI 或動態定價。
 
 ## 架構圖
 
@@ -41,7 +41,7 @@ graph TD
 
 ## 安裝步驟
 
-> **注意**：本倉庫僅包含核心代碼，需自行補充依賴與配置（如 `.env`、Dockerfile）。以下步驟假設您已準備好環境。
+> **注意**：本倉庫僅包含核心代碼，Laravel 部分缺乏基本代碼（如 `composer.json`、模型、遷移等），需自行補充。以下步驟假設您已準備好環境並完成 Laravel 設置。
 
 1. 複製倉庫：
    ```bash
@@ -49,19 +49,38 @@ graph TD
    cd b2b_rentcar_platform
    ```
 
-2. 配置環境變數：
+2. 初始化 Laravel 專案：
+   ```bash
+   cd laravel-app
+   composer init
+   composer require laravel/framework:^11.0 guzzlehttp/guzzle:^7.9 laravel/sanctum:^4.0 tymon/jwt-auth:^2.1
+   php artisan install
+   ```
+   - 參考 Laravel 官方文件，手動創建模型（如 `Car`、`Booking`）、遷移和資料庫結構。
+   - 範例遷移文件（`database/migrations/xxxx_create_cars_table.php`）：
+     ```php
+     Schema::create('cars', function (Blueprint $table) {
+         $table->id();
+         $table->string('model');
+         $table->decimal('daily_rate', 8, 2);
+         $table->boolean('available')->default(true);
+         $table->timestamps();
+     });
+     ```
+
+3. 配置環境變數：
    ```bash
    cp .env.example .env
    ```
-   編輯 `.env`，填入 MySQL、Redis、RabbitMQ 等連線資訊，確保 `JWT_SECRET` 為強密鑰（至少 40 字元）。
+   編輯 `.env`，填入 MySQL、Redis、RabbitMQ 連線資訊，確保 `JWT_SECRET` 為強密鑰（至少 40 字元）。
 
-3. 啟動 Docker 服務：
+4. 啟動 Docker 服務：
    ```bash
    docker compose up --build -d
    ```
-   *此步驟建置並啟動所有服務，可能需等待映像下載完成。*
+   *此步驟建置並啟動服務，可能需等待映像下載。*
 
-4. 設置 Laravel：
+5. 設置 Laravel：
    ```bash
    docker compose exec laravel-app composer install
    docker compose exec laravel-app php artisan key:generate
@@ -69,14 +88,14 @@ graph TD
    docker compose exec laravel-app php artisan migrate
    ```
 
-5. 設置前端：
+6. 設置前端：
    ```bash
    cd frontend-app
    npm install
    npm run build
    ```
 
-6. 訪問應用：
+7. 訪問應用：
    - 前端：`http://localhost`
    - Laravel API：`http://localhost:8000`
    - FastAPI（若啟用）：`http://localhost:8001`
@@ -85,7 +104,7 @@ graph TD
 
 ## 核心代碼
 
-以下展示租車功能的核心邏輯，保持簡潔實用。
+以下展示租車功能的核心邏輯，附詳細註解，方便理解與維護。
 
 ### 後端：車輛預約 API（Laravel）
 
@@ -102,51 +121,71 @@ use Illuminate\Support\Facades\Auth;
 
 class CarRentalController extends Controller
 {
+    /**
+     * 查詢可用車輛
+     * @param Request $request HTTP 請求，包含可選的 start_date 和 end_date 參數
+     * @return \Illuminate\Http\JsonResponse 可用車輛列表
+     */
     public function index(Request $request)
     {
+        // 查詢可用車輛（available = true）
         $cars = Car::query()
             ->where('available', true)
+            // 若提供起訖日期，過濾已被預約的車輛
             ->when($request->start_date, function ($query) use ($request) {
                 $query->whereDoesntHave('bookings', function ($q) use ($request) {
+                    // 排除預約時間重疊的車輛
                     $q->whereBetween('start_date', [$request->start_date, $request->end_date])
                       ->orWhereBetween('end_date', [$request->start_date, $request->end_date]);
                 });
             })
             ->get();
 
+        // 回傳 JSON 格式的車輛列表
         return response()->json($cars);
     }
 
+    /**
+     * 處理車輛預約請求
+     * @param Request $request HTTP 請求，包含 car_id、start_date、end_date
+     * @return \Illuminate\Http\JsonResponse 預約結果
+     */
     public function book(Request $request)
     {
+        // 驗證請求參數
         $request->validate([
-            'car_id' => 'required|exists:cars,id',
-            'start_date' => 'required|date|after:now',
-            'end_date' => 'required|date|after:start_date',
+            'car_id' => 'required|exists:cars,id', // 車輛 ID 必填且需存在
+            'start_date' => 'required|date|after:now', // 開始日期必填且需晚於當前時間
+            'end_date' => 'required|date|after:start_date', // 結束日期必填且需晚於開始日期
         ]);
 
+        // 查詢指定車輛
         $car = Car::find($request->car_id);
+        // 檢查車輛是否可用
         if (!$car->available) {
             return response()->json(['error' => '車輛不可用'], 400);
         }
 
+        // 創建預約記錄
         $booking = Booking::create([
-            'user_id' => Auth::id(),
+            'user_id' => Auth::id(), // 當前認證用戶的 ID
             'car_id' => $request->car_id,
             'start_date' => $request->start_date,
             'end_date' => $request->end_date,
-            'status' => 'pending',
+            'status' => 'pending', // 預約初始狀態為待確認
         ]);
 
+        // 將預約任務發送至 RabbitMQ 進行異步處理
         dispatch(new ProcessBooking($booking));
 
+        // 回傳成功訊息與預約詳情
         return response()->json(['message' => '預約成功，待確認', 'booking' => $booking]);
     }
 }
 ```
 
 - **功能**：查詢可用車輛（過濾預約時間），處理預約請求並發送至 RabbitMQ。
-- **說明**：使用 Eloquent 查詢，JWT 驗證用戶，異步任務提升效能。
+- **說明**：使用 Eloquent 查詢，JWT 驗證用戶，異步任務提升效能。需自行創建 `Car` 和 `Booking` 模型。
 
 ### 前端：車輛列表組件（Vue）
 
@@ -155,10 +194,13 @@ class CarRentalController extends Controller
 ```vue
 <template>
   <div class="car-list">
+    <!-- 顯示車輛列表標題 -->
     <h2>可用車輛</h2>
+    <!-- 遍歷車輛數據，渲染每個車輛卡片 -->
     <div v-for="car in cars" :key="car.id" class="car-item">
       <h3>{{ car.model }}</h3>
       <p>日租金: {{ car.daily_rate }} 元</p>
+      <!-- 點擊觸發預約功能 -->
       <button @click="bookCar(car.id)">預約</button>
     </div>
   </div>
@@ -168,39 +210,56 @@ class CarRentalController extends Controller
 import axios from 'axios';
 
 export default {
+  // 定義組件數據
   data() {
     return {
-      cars: [],
-      startDate: '',
-      endDate: '',
+      cars: [], // 儲存從 API 獲取的車輛列表
+      startDate: '', // 預約開始日期
+      endDate: '', // 預約結束日期
     };
   },
+  // 組件掛載時自動載入車輛數據
   mounted() {
     this.fetchCars();
   },
   methods: {
+    /**
+     * 從後端 API 獲取可用車輛列表
+     * @returns {Promise<void>}
+     */
     async fetchCars() {
       try {
+        // 發送 GET 請求，包含起訖日期參數
         const response = await axios.get('/api/cars', {
           params: {
             start_date: this.startDate,
             end_date: this.endDate,
           },
         });
+        // 更新車輛列表數據
         this.cars = response.data;
       } catch (error) {
+        // 錯誤處理，記錄至控制台
         console.error('無法載入車輛:', error);
       }
     },
+    /**
+     * 提交車輛預約請求
+     * @param {number} carId 車輛 ID
+     * @returns {Promise<void>}
+     */
     async bookCar(carId) {
       try {
+        // 發送 POST 請求，提交預約資料
         const response = await axios.post('/api/bookings', {
           car_id: carId,
           start_date: this.startDate,
           end_date: this.endDate,
         });
+        // 顯示預約成功訊息
         alert(response.data.message);
       } catch (error) {
+        // 顯示預約失敗訊息
         alert('預約失敗: ' + error.response.data.error);
       }
     },
@@ -209,14 +268,15 @@ export default {
 </script>
 
 <style scoped>
+/* 樣式限定於本組件 */
 .car-list {
   max-width: 800px;
-  margin: 0 auto;
+  margin: 0 auto; /* 居中顯示 */
 }
 .car-item {
-  border: 1px solid #ddd;
+  border: 1px solid #ddd; /* 卡片邊框 */
   padding: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 10px; /* 卡片間距 */
 }
 </style>
 ```
@@ -226,8 +286,9 @@ export default {
 
 ## 注意事項
 
-- **安全性**：請設置 `.env` 權限（`chmod 600 .env`），勿上傳至 Git。
-- **多租戶**：僅包含 `tenant_id` 雛形，需自行實現完整隔離邏輯。
+- **Laravel 設置**：需手動補充 `composer.json`、模型、遷移等，參考 Laravel 官方文件。
+- **安全性**：設置 `.env` 權限（`chmod 600 .env`），勿上傳至 Git。
+- **多租戶**：僅包含 `tenant_id` 雛形，需自行實現隔離邏輯。
 - **密碼管理**：Grafana 和 RabbitMQ 預設密碼需在生產環境更換。
 - **FastAPI**：預設禁用，啟用需編輯 `docker-compose.yml`。
 
@@ -235,8 +296,8 @@ export default {
 
 - 完善多租戶功能（資料庫或 Schema 隔離）。
 - 加入支付模組（如 Stripe）。
-- 優化車輛查詢效能，支援大規模數據。
-- 導入日誌聚合（如 Grafana Loki）與 CI/CD。
+- 優化查詢效能，支援大規模數據。
+- 導入日誌聚合（如 Grafana Loki）。
 
 ## 問題反饋
 
