@@ -1,0 +1,14 @@
+.git
+.env
+.idea
+.vscode
+*.log
+.DS_Store
+Thumbs.db
+laravel-app/vendor
+laravel-app/node_modules
+fastapi-app/__pycache__
+fastapi-app/.pytest_cache
+fastapi-app/.venv
+frontend-app/node_modules
+frontend-app/dist
